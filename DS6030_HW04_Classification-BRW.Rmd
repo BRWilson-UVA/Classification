@@ -1,0 +1,423 @@
+---
+title: "DS 6030 HW04 Classification"
+author: "Ben Wilson"
+date: "`09/21/2022"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    theme: cosmo
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r}
+#set up R
+knitr::opts_chunk$set(echo = TRUE)
+data.dir = 'https://mdporter.github.io/DS6030/data/' # data directory
+library(R6030)     # functions for SYS-6030
+library(tidyverse) # functions for data manipulation  
+library(glmnet)
+library(yardstick)
+```
+
+# Crime Linkage
+
+Load data for R
+```{r}
+#load data
+linkage_test <- read.csv("C:\\Users\\brwil\\Desktop\\SY MSDS\\DS 6030 Stat Learning\\Week 5\\linkage_test.csv", header=TRUE,stringsAsFactors=FALSE)
+
+linkage_train <- read.csv("C:\\Users\\brwil\\Desktop\\SY MSDS\\DS 6030 Stat Learning\\Week 5\\linkage_train.csv", header=TRUE,stringsAsFactors=FALSE)
+
+```
+
+Setting for R
+```{r}
+#-- Settings
+K = 10            # number of CV folds
+M = 20             # number of simulations
+n.folds = 10
+```
+
+Establish x,y values
+```{r}
+#create glmnet matrix
+Split = sample(c(rep(0, 0.7 * nrow(linkage_train)),
+                 rep(1, 0.3 * nrow(linkage_train))))
+
+Split.train = linkage_train[Split == 0, ]
+Split.test = linkage_train[Split == 1, ]
+
+X.train = makeX(Split.train %>% select(-y))
+Y.train = Split.train$y
+
+X.test = makeX(Split.test %>% select(-y))
+Y.test = Split.test$y
+
+#create folds
+fold = sample(rep(1:n.folds, length=nrow(X.train)))
+
+```
+
+
+## 1a. Fit a penalized linear regression model to predict linkage. Use a lasso, ridge, or elasticnet penalty (your choice).
+Report the value of alpha used (if elasticnet)
+Report the value of lambda used
+Report the estimated coefficients
+
+Identify optimal alpha 
+
+```{r}
+#loop lambda values
+models <- list()
+for (i in 0:20) {
+  name <- paste0("alpha", i/20)
+  
+
+  models[[name]] <-
+    cv.glmnet(X.train, Y.train, type.measure="mse", alpha=i/20, 
+              family="gaussian")
+}
+
+#predict results
+results <- data.frame()
+for (i in 0:20) {
+  name <- paste0("alpha", i/20)
+  
+  ## Use each model to predict 'y' given the Testing dataset
+  predicted <- predict(models[[name]], 
+                       s=models[[name]]$lambda.1se, newx=X.test)
+  
+  ## Calculate the Mean Squared Error...
+  mse <- mean((Y.test - predicted)^2)
+  
+  ## Store the results
+  temp <- data.frame(alpha=i/20, mse=mse, name=name)
+  results <- rbind(results, temp)
+}
+
+#print results
+print(results)
+
+#min results
+results %>% slice_min(mse)
+
+#plot results
+plot(results$alpha, results$mse)
+
+```
+
+Capture optimal lambda
+```{r}
+alpha = 0.7         # glmnet tuning alpha (1 = lasso, 0 = ridge)
+
+#capture lambda valyes
+lambda_values = tibble()
+MSE_values = tibble()
+
+
+for(m in 1:M) {
+  
+#Build Training Models using cross-validation
+  lasso_cv = cv.glmnet(X.train, Y.train, alpha = alpha, nfolds = K)
+
+  
+ #get lambda that minimizes cv error and 1 SE rule
+  min_lambda = lasso_cv$lambda.min
+  se_lambda = lasso_cv$lambda.1se
+
+  
+  #Predict y values for test data (for each model: min, 1SE)
+  yhat_min = predict(lasso_cv, X.test, s = "lambda.min")
+  yhat_lse = predict(lasso_cv, X.test, s = "lambda.1se")
+  
+  #evaluate predictions
+  MSE_min = mean((Y.test - yhat_min)^2)
+  MSE_lse = mean((Y.test - yhat_lse)^2)
+  MSE_values = rbind(MSE_values, c(MSE_min, MSE_lse))
+
+}
+
+#update table names
+names(lambda_values)[1] <- "min"
+names(MSE_values)[1] <- "min"
+names(MSE_values)[2] <- "SE1"
+
+#return values
+colMeans(MSE_values)
+t.test(MSE_values$min, MSE_values$SE1, paired = TRUE, alternative = "two.sided")
+```
+
+```{r}
+
+#fit linear regression model
+fit.lm = cv.glmnet(X.train, Y.train, alpha = alpha, family = "gaussian", nfolds = K)
+lm_fit = glmnet(X.train, Y.train, alpha = alpha, lambda = "lambda.min", family = "gaussian")
+
+#plot fit of elastic net
+plot(fit.lm, las = 1)
+
+#report coefficients
+fit.lm
+```
+
+Lambda value used: 0.0005
+Alpha value used: 0.7
+
+## 1b. Fit a penalized logistic regression model to predict linkage. Use a lasso, ridge, or elasticnet penalty (your choice).
+
+Report the value of alpha used (if elasticnet)
+Report the value of lambda used
+Report the estimated coefficients
+
+Identify optimal alpha 
+
+```{r}
+#loop lambda values
+models <- list()
+for (i in 0:20) {
+  name <- paste0("alpha", i/20)
+  
+
+  models[[name]] <-
+    cv.glmnet(X.train, Y.train, type.measure="mse", alpha=i/20, 
+              family="binomial")
+}
+
+#predict results
+results <- data.frame()
+for (i in 0:20) {
+  name <- paste0("alpha", i/20)
+  
+  ## Use each model to predict 'y' given the Testing dataset
+  predicted <- predict(models[[name]], 
+                       s=models[[name]]$lambda.1se, newx=X.test)
+  
+  ## Calculate the Mean Squared Error...
+  mse <- mean((Y.test - predicted)^2)
+  
+  ## Store the results
+  temp <- data.frame(alpha=i/20, mse=mse, name=name)
+  results <- rbind(results, temp)
+}
+
+#print results
+print(results)
+
+#min results
+results %>% slice_min(mse)
+
+#plot results
+plot(results$alpha, results$mse)
+
+```
+
+Capture optimal lambda
+```{r}
+alpha = 0.0         # glmnet tuning alpha (1 = lasso, 0 = ridge)
+
+#capture lambda valyes
+lambda_values = tibble()
+MSE_values = tibble()
+
+
+for(m in 1:M) {
+  
+#Build Training Models using cross-validation
+  lasso_cv = cv.glmnet(X.train, Y.train, alpha = alpha, nfolds = K)
+
+  
+ #get lambda that minimizes cv error and 1 SE rule
+  min_lambda = lasso_cv$lambda.min
+  se_lambda = lasso_cv$lambda.1se
+
+  
+  #Predict y values for test data (for each model: min, 1SE)
+  yhat_min = predict(lasso_cv, X.test, s = "lambda.min")
+  yhat_lse = predict(lasso_cv, X.test, s = "lambda.1se")
+  
+  #evaluate predictions
+  MSE_min = mean((Y.test - yhat_min)^2)
+  MSE_lse = mean((Y.test - yhat_lse)^2)
+  MSE_values = rbind(MSE_values, c(MSE_min, MSE_lse))
+
+}
+
+#update table names
+names(lambda_values)[1] <- "min"
+names(MSE_values)[1] <- "min"
+names(MSE_values)[2] <- "SE1"
+
+#return values
+colMeans(MSE_values)
+t.test(MSE_values$min, MSE_values$SE1, paired = TRUE, alternative = "two.sided")
+```
+
+```{r}
+#fit elastic net
+fit.enet = cv.glmnet(X.train, Y.train, alpha = alpha, family = "binomial", nfolds = K)
+enet_fit = glmnet(X.train, Y.train, alpha = alpha, lambda = "lambda.min", family = "binomial")
+
+#plot fit of elastic net
+plot(fit.enet, las = 1)
+
+#print coefficients
+fit.enet
+```
+
+Lambda value used: 0.0000538
+Alpha value used: 0.0
+
+
+#1c. Produce one plot that has the ROC curves, using the training data, for both models (from part a and b). Use color and/or linetype to distinguish between models and include a legend.
+
+ROC Outputs
+```{r}
+
+#Get predictions (of p(x)) on test data
+p.hat_lm = predict(fit.lm, X.test, type='response')
+
+p.hat_lr = predict(fit.enet, X.test, type='response')
+
+#Make Hard classification (use .10 as cut-off)
+G.hat_lm = ifelse(p.hat_lm >= .10, 1, 0)
+
+G.hat_lr = ifelse(p.hat_lr >= .10, 1, 0)
+
+#Get predictions (of gamma(x)) on test data
+gamma_lm = predict(fit.lm, X.test, type='link')[,1]
+
+gamma_lr = predict(fit.enet, X.test, type='link')[,1]
+
+#ROCs
+ROC_lm = tibble(truth = factor(Y.test, levels=c(1,0)), gamma_lm) %>%
+  yardstick::roc_curve(truth, gamma_lm)
+
+#ROC plots
+ROC_lr = tibble(truth = factor(Y.test, levels=c(1,0)), gamma_lr) %>%
+  yardstick::roc_curve(truth, gamma_lr)
+
+#add column to name and bind
+ROC_lr$name <- 'logistic regression'
+ROC_lm$name <- 'linear regression'
+ROC <- rbind(ROC_lm, ROC_lr)
+
+#plot ROC
+ROC %>% 
+  ggplot(aes(1-specificity, sensitivity)) + geom_line(aes(color = name)) +
+  geom_abline(lty=3) +
+  coord_equal()
+
+```
+
+
+## 1d. Recreate the ROC curve from the penalized logistic regression model using repeated hold-out data. The following steps will guide you:
+Fix alpha=.75
+Run the following steps 25 times:
+- Hold out 500 observations
+- Use the remaining observations to estimate lambda using 10-fold CV
+- Predict the probability of linkage for the 500 hold-out observations
+- Store the predictions and hold-out labels
+Combine the results and produce the hold-out based ROC curve
+Note: by estimating lambda each iteration, we are incorporating the uncertainty present in estimating that tuning parameter.
+
+```{r}
+#create new conditions
+alpha = 0.75 #new alpha
+M = 25 # number of simulations
+K = 10
+
+#create list to capture new results
+p_hat_list = vector("list", length = M)
+
+#for loop to generate phat values
+for (m in 1:M){
+  #hold out 500 values
+  Split.D = sample(c(rep(0, nrow(linkage_train)-500),
+                     rep(1,500)))
+  
+  #perform test train split
+  Split.trainD = linkage_train[Split.D == 0,]
+  Split.testD = linkage_train[Split.D == 1, ]
+  
+  #generate new x and y values for train
+  X.trainD = glmnet::makeX(Split.trainD %>% select(-y))
+  Y.trainD = Split.trainD$y
+  
+  #generate new x and y values for test
+  X.testD = glmnet::makeX(Split.testD %>% select(-y))
+  Y.testD = Split.testD$y
+  
+  fold = sample(rep(1:n.folds, length=nrow(X.trainD)))
+  
+  #retrain models with new x and y values
+  enet_fitD = glmnet(X.trainD, Y.trainD, alpha = alpha, 
+                    lambda = "lambda.min", family = "binomial")
+  
+  #generate probability for 500 observations
+  p_hatD = predict(enet_fitD, X.testD, type = 'response')[,1]
+  
+  #create df for storing results
+  p_hat_lists = tibble(p_hatD, true_label = Y.testD) %>%
+    mutate(sim = m)
+  
+  #store results in df
+  p_hat_list[[m]] = p_hat_lists
+  
+}
+
+#bind two lists for phat
+p_hat_finalD = bind_rows(p_hat_list)
+
+#store phat results for ROC curve
+p_hat_ROCD = p_hat_finalD$p_hatD
+
+#df for ROC curve results
+ROC_d = tibble(truth = factor(p_hat_finalD$true_label, levels = c(1,0)), p_hat_ROCD) %>%
+  yardstick::roc_curve(truth, p_hat_ROCD)
+
+#visualize ROC curve
+ROC_d %>%
+  ggplot(aes(1-specificity, sensitivity)) + geom_line() + 
+  geom_abline(lty=3) + 
+  coord_equal()
+
+```
+
+## 1e. Contest Part 1: Predict the estimated probability of linkage for the test data (using any model).
+- Submit a .csv file (ensure comma separated format) named lastname_firstname_1.csv that includes the column named p that is your estimated posterior probability. We will use automated evaluation, so the format must be exact.
+- You are free to use any tuning parameters
+- You are free to use any data transformation or feature engineering
+- You will receive credit for a proper submission; the top five scores will receive 2 bonus points.
+- Your probabilities will be evaluated with respect to the mean negative Bernoulli log-likelihood (known as the average log-loss metric)
+
+```{r}
+fit_lasso = cv.glmnet(X.train, Y.train, alpha = 1, family = binomial)
+
+p_hat = predict(fit_lasso, X.test, type="response", s = "lambda.min")
+
+#export csv file
+write.csv(p_hat,"C:\\Users\\brwil\\Desktop\\SY MSDS\\DS 6030 Stat Learning\\Week 5\\wilson_benjamin_1.csv", row.names = FALSE)
+
+
+```
+
+## 1f. Contest Part 2: Predict the linkages for the test data (using any model).
+- Submit a .csv file (ensure comma separated format) named lastname_firstname_2.csv that includes the column named linkage that takes the value of 1 for linkages and 0 for unlinked pairs. We will use automated evaluation, so the format must be exact.
+- You are free to use any tuning parameters.
+- You are free to use any data transformation or feature engineering.
+- Your labels will be evaluated based on total cost, where cost is equal to 1*FP + 8*FN. This implies that False Negatives (FN) are 8 times as costly as False Positives (FP)
+- You will receive credit for a proper submission; the top five scores will receive 2 bonus points. Note: you only will get bonus credit for one of the two contests.
+```{r}
+linkage = predict(fit_lasso, X.test, type="response", s = "lambda.min")
+linkage_tibble = tibble(linkage)
+names(linkage_tibble)[1] <- "linkage"
+
+#export csv file
+write.csv(p_hat,"C:\\Users\\brwil\\Desktop\\SY MSDS\\DS 6030 Stat Learning\\Week 5\\wilson_benjamin_2.csv", row.names = FALSE)
+
+```
+
